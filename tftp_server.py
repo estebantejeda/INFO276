@@ -28,7 +28,6 @@ TFTP_ERRORS = {
     7: 'No Such User'
 }
 
-
 def create_data_packet(block, filename, mode):
     data = bytearray()
     # append data opcode (03)
@@ -46,7 +45,6 @@ def create_data_packet(block, filename, mode):
 
     return data
 
-
 def create_ack_packet(block):
     ack = bytearray()
     # append acknowledgement opcode (04)
@@ -59,7 +57,6 @@ def create_ack_packet(block):
     ack.append(int(b[1]))
 
     return ack
-
 
 def create_error_packet(error_code):
     err = bytearray()
@@ -79,10 +76,8 @@ def create_error_packet(error_code):
 
     return err
 
-
 def send_packet(packet, socket, addr):
     socket.sendto(packet, addr)
-
 
 def read_file(block, filename):
     with open(filename, 'rb') as f:
@@ -91,12 +86,11 @@ def read_file(block, filename):
         content = f.read(512)
     return content
 
-
 # Get opcode from TFTP header
 def get_opcode(bytes):
     opcode = int.from_bytes(bytes[0:2], byteorder='big')
     if opcode not in TFTP_OPCODES.keys():
-        return false
+        return False
     return TFTP_OPCODES[opcode]
 
 
@@ -151,37 +145,42 @@ def listen(sock, filename, mode):
                     break
 
                 opcode = get_opcode(data)
-                if opcode == 'ACK':
-                    block = int.from_bytes(data[2:4], byteorder='big')
-                    # Check length of the last DATA packet sent, if the Datagram length is 
-                    # less than 516 it is the last packet. Upon receiving the final ACK packet
-                    # from the client we can terminate the connection.
-                    if(len(session['packet']) < 516 and block == int.from_bytes(session['packet'][2:4], byteorder="big")):
-                        break
 
-                    packet = create_data_packet(block + 1, filename, mode)
-                    session['packet'] = packet
-                    send_packet(packet, sock, addr)
-                elif opcode == 'DATA':
-                    block = int.from_bytes(data[2:4], byteorder='big')
-                    content = data[4:]
-                    with open(filename, 'ab+') as f:
-                        f.write(content)
+                if not searchTransmitter(addr, data):
+                    if not acceptTransmitterQuestion: return
+                    if saveTransmitterQuestion: newTransmitter(addr, data)
 
-                    packet = create_ack_packet(block)
-                    session['packet'] = packet
-                    send_packet(packet, sock, addr)
+                    if opcode == 'ACK':
+                        block = int.from_bytes(data[2:4], byteorder='big')
+                        # Check length of the last DATA packet sent, if the Datagram length is 
+                        # less than 516 it is the last packet. Upon receiving the final ACK packet
+                        # from the client we can terminate the connection.
+                        if(len(session['packet']) < 516 and block == int.from_bytes(session['packet'][2:4], byteorder="big")):
+                            break
 
-                    # Close connection once all data has been received and final 
-                    # ACK packet has been sent
-                    if len(content) < 512:
-                        print('closing connection')
-                        break
-                else:
-                    # Threads only handle incoming packets with ACK/DATA opcodes, send
-                    # 'Illegal TFTP Operation' ERROR packet for any other opcode.
-                    packet = create_error_packet(4)
-                    send_packet(packet, sock, addr)
+                        packet = create_data_packet(block + 1, filename, mode)
+                        session['packet'] = packet
+                        send_packet(packet, sock, addr)
+                    elif opcode == 'DATA':
+                        block = int.from_bytes(data[2:4], byteorder='big')
+                        content = data[4:]
+                        with open(filename, 'ab+') as f:
+                            f.write(content)
+
+                        packet = create_ack_packet(block)
+                        session['packet'] = packet
+                        send_packet(packet, sock, addr)
+
+                        # Close connection once all data has been received and final 
+                        # ACK packet has been sent
+                        if len(content) < 512:
+                            print('closing connection')
+                            break
+                    else:
+                        # Threads only handle incoming packets with ACK/DATA opcodes, send
+                        # 'Illegal TFTP Operation' ERROR packet for any other opcode.
+                        packet = create_error_packet(4)
+                        send_packet(packet, sock, addr)
             except socket.timeout:
                 print(session['consec_timeouts'])
                 if session['consec_timeouts'] < MAX_TIMEOUT_RETRIES:
@@ -196,8 +195,6 @@ def listen(sock, filename, mode):
         print(e)
         close_connection(sock) 
         return False # returning from the thread's run() method ends the thread
-
-
 
 def main():
     sock = create_udp_socket()
@@ -258,6 +255,39 @@ def main():
             # 'Illegal TFTP Operation' ERROR packet for any other opcode.
             packet = create_error_packet(4)
             send_packet(packet, sock, addr)
+
+# Implementaciones
+
+fileName = "log.txt"
+
+def newTransmitter(ip, msg):
+    if not os.path.isfile(fileName):
+        logFile = open(fileName, "w")
+        logFile.write(ip + "->" + msg)
+        logFile.close()
+    else:
+        logFile = open(fileName, "a")
+        logFile.write("\n" + ip + "->" + msg)
+        logFile.close()
+
+def searchTransmitter(ip, msg):
+    IpMsge = ip+"->"+msg
+    logFile = open(fileName, "r")
+    isTransmitter = logFile.read().find(IpMsge)
+    if isTransmitter == -1: return False
+    return True
+
+def acceptTransmitterQuestion(ip, msg):
+    print("Accept", ip, ":", msg, "? [y/N]")
+    userInput = input("> ")
+    if(userInput == "y"): return True
+    return False
+
+def saveTransmitterQuestion():
+    print("Do you want to save the transmitter? [y/N]")
+    userInput = input("> ")
+    if(userInput == "y"): return True
+    return False
 
 
 if __name__ == '__main__':
